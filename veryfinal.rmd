@@ -1,0 +1,810 @@
+---
+title: "Итоговый проект"
+author: "Группа 22"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_depth: 4
+    toc_float:
+       collapsed: true
+       smooth_scroll: false
+---
+
+
+### Предобработка 
+
+Сначала мы провели чистку данных. Мы удалили, например, комиксы не на английском языке (так как их невозможно было использовать и в текстовом анализе, и при построении рекомендательных систем), удалили комиксы, где есть NA в интересующих нас колонках и создали новый датасет, где оставили только интересующие нас характеристики. Кроме того, мы провели модификацию жанров - из трёх колонок shelves мы сделали одну, в которой под новыми названиями, которые были более общими и понятными, сгруппировали разные жанры. А также, мы создали полку с разделением комиксов на их размеры в зависимости от их объема. 
+Далее мы провели текстовый анализ. В него вошёл сентимент-анализ описаний комиксов, сентимент-анализ  отзывов и разбиение описаний на темы по LDA (5 тем, которые вы можете увидеть на графики). Мы посчитали, что самым эффективным будет включить в рекомендацию только сентимент-анализ описаний, так как только он по нашему мнению представляет объективную метрику для схожести комиксов. Тем не менее, все элементы текстового анализа оказались полезными для понимания нами предложенных нам данных
+Мы провели также и сетевой анализ, но решили не включать его в отсчёт, так как он не дал интерпретируемых результатов.
+
+```{r}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r, results=FALSE}
+#для начала чистим данные. Удаляем комиксы не английском, удаляем комиксы, где NA.
+
+library(tidytext) 
+library(tidyverse)
+library(recommenderlab)
+library(ggplot2) 
+library(tidyr) 
+library(stringr) 
+library(dplyr) 
+library(LDAvis) 
+library(topicmodels) 
+
+load("~/shared/minor2_2020/data/good_read/books_g_4.RData")
+load("~/shared/minor2_2020/data/good_read/reviews_g_4.RData")
+
+gr = goodread_reviews
+goodread_comics = goodread_comics[-c(128,81,390,422,316,430,182),]
+#Делаем обработку shelves. Соединяем три колонки в одну и группируем похожие жанры под одним названием
+goodread_comics %>% select (popular_shelves.0.name) %>% 
+group_by(popular_shelves.0.name) %>% summarize()
+
+goodread_comics %>% select (popular_shelves.1.name) %>% 
+group_by(popular_shelves.1.name) %>% summarize()
+
+goodread_comics %>% select (popular_shelves.2.name) %>% 
+group_by(popular_shelves.2.name) %>% summarize()
+
+goodread_comics %>% select (popular_shelves.3.name) %>% 
+group_by(popular_shelves.3.name) %>% summarize()
+
+goodread_comics$popular_shelves.0.name = case_when (
+goodread_comics$popular_shelves.0.name == "cómics" ~ "comics", 
+goodread_comics$popular_shelves.0.name == "còmics" ~ "comics", 
+goodread_comics$popular_shelves.0.name == "graphic-novel" ~ "graphic-novels", 
+goodread_comics$popular_shelves.0.name == "graphic-novels" ~ "graphic-novels", 
+goodread_comics$popular_shelves.0.name == "mangá" ~ "manga", 
+goodread_comics$popular_shelves.0.name == "currently-reading" ~ "to-read", 
+T ~ goodread_comics$popular_shelves.0.name)
+
+goodread_comics %>% select (popular_shelves.0.name) %>% 
+group_by(popular_shelves.0.name) %>% summarize()
+goodread_comics$popular_shelves.1.name = case_when (
+goodread_comics$popular_shelves.1.name == "comic-books" ~ "comics",
+goodread_comics$popular_shelves.1.name == "comic" ~ "comics", 
+goodread_comics$popular_shelves.1.name == "cómics" ~ "comics", 
+goodread_comics$popular_shelves.1.name == "graphic-novel" ~ "graphic-novels", 
+goodread_comics$popular_shelves.1.name == "graphic-novels" ~ "graphic-novels",
+goodread_comics$popular_shelves.1.name == "mangá" ~ "manga", 
+goodread_comics$popular_shelves.1.name == "sci-fi" ~ "science-fiction", 
+goodread_comics$popular_shelves.1.name == "science-fiction" ~ "science-fiction", 
+T ~ goodread_comics$popular_shelves.1.name)
+
+goodread_comics %>% select (popular_shelves.1.name) %>% 
+group_by(popular_shelves.1.name) %>% summarize()
+goodread_comics$popular_shelves.2.name = case_when (
+goodread_comics$popular_shelves.2.name == "comic" ~ "comics", 
+goodread_comics$popular_shelves.2.name == "comic-books" ~ "comics", 
+goodread_comics$popular_shelves.2.name == "cómics" ~ "comics", 
+goodread_comics$popular_shelves.2.name == "còmics" ~ "comics", 
+goodread_comics$popular_shelves.2.name == "dc-comics" ~ "dc",
+goodread_comics$popular_shelves.2.name == "graphic-novel" ~ "graphic-novels", 
+goodread_comics$popular_shelves.2.name == "graphic-novels" ~ "graphic-novels",
+goodread_comics$popular_shelves.2.name == "janet-evanovich" ~ "romance", 
+goodread_comics$popular_shelves.2.name == "mangá" ~ "manga", 
+goodread_comics$popular_shelves.2.name == "sci-fi" ~ "science-fiction", 
+goodread_comics$popular_shelves.2.name == "science-fiction" ~ "science-fiction",
+T ~ goodread_comics$popular_shelves.2.name)
+
+goodread_comics %>% select (popular_shelves.2.name) %>% 
+group_by(popular_shelves.2.name) %>% summarize()
+goodread_comics$popular_shelves.3.name = case_when (
+goodread_comics$popular_shelves.3.name == "comic" ~ "comics", 
+goodread_comics$popular_shelves.3.name == "comic-books" ~ "comics", 
+goodread_comics$popular_shelves.3.name == "cómics" ~ "comics", 
+goodread_comics$popular_shelves.3.name == "comics-graphic-novels" ~ "comics", 
+goodread_comics$popular_shelves.3.name == "dc-comics" ~ "dc",
+goodread_comics$popular_shelves.3.name == "graphic-novel" ~ "graphic-novels", 
+goodread_comics$popular_shelves.3.name == "graphic-novels" ~ "graphic-novels", 
+goodread_comics$popular_shelves.3.name == "mangas" ~ "manga", 
+goodread_comics$popular_shelves.3.name == "superhero" ~ "superheroes", 
+goodread_comics$popular_shelves.3.name == "superman" ~ "dc",
+goodread_comics$popular_shelves.3.name == "batman" ~ "dc",
+goodread_comics$popular_shelves.3.name == "sci-fi" ~ "science-fiction", 
+goodread_comics$popular_shelves.3.name == "science-fiction" ~ "science-fiction", 
+goodread_comics$popular_shelves.3.name == "wonder-woman" ~ "dc",
+goodread_comics$popular_shelves.3.name == "x-men" ~ "marvel",
+goodread_comics$popular_shelves.3.name == "deadpool" ~ "marvel", 
+goodread_comics$popular_shelves.3.name == "green-lantern" ~ "dc", 
+T ~ goodread_comics$popular_shelves.3.name)
+
+goodread_comics %>% select (popular_shelves.3.name) %>% 
+group_by(popular_shelves.3.name) %>% summarize()
+goodread_comics$all_shelves = paste (goodread_comics$popular_shelves.0.name, goodread_comics$popular_shelves.1.name, goodread_comics$popular_shelves.2.name, goodread_comics$popular_shelves.3.name)
+
+goodread_comics$all_shelves = str_replace_all (goodread_comics$all_shelves, '_', " ")
+gc = goodread_comics %>% select (-title_without_series, -authors.0.author_id, -authors.0.role, -authors.1.author_id, -authors.1.role, -country_code, -description, -link, -is_ebook, -language_code)
+
+gc$size_type = case_when(gc$num_pages < 100 ~ "small", gc$num_pages > 100 & gc$num_pages < 250 ~ "medium",gc$num_pages > 249 & gc$num_pages < 400 ~ "decent",gc$num_pages > 399 & gc$num_pages < 550 ~ "large",gc$num_pages > 549 ~ "extra large", T ~ "no data")
+
+goodread_comics_1 = goodread_comics %>% filter(book_id!="") %>% filter(average_rating!="") %>% filter(num_pages!="")
+
+goodread_comics_1$num_pages = as.numeric(goodread_comics_1$num_pages)
+goodread_comics_1$average_rating = as.numeric(goodread_comics_1$average_rating)
+goodread_comics_2 = goodread_comics_1 %>% select(title, average_rating, num_pages)
+goodread_comics_2 = goodread_comics_2 %>% drop_na(num_pages)
+```
+
+```{r, results=FALSE}
+#Текстовый анализ
+
+#сентимент-анализ. Разбиваем описания на "очень мрачные", "мрачные", "средние", "весёлые" и "очень весёлые"
+
+goodread_comics_1$description = str_replace_all(goodread_comics_1$description, "[:punct:]+", " ") 
+goodread_comics_1$description = str_remove_all(goodread_comics_1$description, "[:digit:]")
+goodread_comics_1$description = str_to_lower(goodread_comics_1$description)
+comics_tokens = goodread_comics_1 %>% select(book_id, description, title) %>%  unnest_tokens(words, description)
+stopw = data.frame(words = stopwords::stopwords("en"))
+comics_tokens1 = comics_tokens %>% 
+  anti_join(stopw) 
+sentdict = get_sentiments("afinn")
+comics_tokens = comics_tokens %>% 
+  anti_join(stopw) %>% 
+  inner_join(sentdict, by = c("words"="word"))
+com_sent = comics_tokens %>% 
+  group_by(title, book_id) %>% 
+  summarize(sent = mean(value))
+
+goodread_comics = full_join(goodread_comics, com_sent)
+goodread_comics$sent[is.na(goodread_comics$sent)] <- 0
+goodread_comics$sent_type = case_when(goodread_comics$sent <= -1 ~ "very dark", 
+                                        goodread_comics$sent > -1 & goodread_comics$sent <= 0 ~ "dark",
+                                        goodread_comics$sent > 0 & goodread_comics$sent <= 1 ~ "medium", 
+                                        goodread_comics$sent > 1 & goodread_comics$sent <= 2 ~ "positive",
+                                        goodread_comics$sent> 2 ~ "very positive", T ~ "no data")
+gc$sent_type = goodread_comics$sent_type
+gc$sent = goodread_comics$sent
+#тематическое моделирование
+word_counts <- comics_tokens %>%
+
+count(book_id, words, sort = TRUE) %>%
+
+ungroup()
+
+rewiew_dtm <- word_counts %>%
+
+cast_dtm(book_id, words, n)
+
+review5_lda <- LDA(rewiew_dtm, k = 5, control = list(seed = 12345))
+
+review5_lda
+
+review5_topics <- tidy(review5_lda, matrix = "beta")
+
+review5_documents <- tidy(review5_lda, matrix = "gamma")
+```
+
+```{r, results=FALSE}
+#посмотреть на сами темы
+
+review5_top_terms <- review5_topics %>%
+
+group_by(topic) %>%
+
+top_n(10, beta) %>%
+
+ungroup() %>%
+
+arrange(topic, -beta)
+
+library(ggplot2)
+
+review5_top_terms %>%
+
+mutate(term = reorder(term, beta)) %>%
+
+ggplot(aes(term, beta, fill = factor(topic))) +
+
+geom_col(show.legend = FALSE) +
+
+facet_wrap(~ topic, scales = "free") +
+
+coord_flip()
+
+#TF - IDF
+
+comics_count = comics_tokens1 %>% 
+  dplyr::count(words) 
+
+comics_count = comics_count %>% 
+  filter(n > 5 & n < quantile(comics_count$n, 0.95))
+
+
+comics_tokens1 = comics_tokens1 %>% 
+  filter(words %in% comics_count$words)
+
+comics_count = comics_tokens1 %>%
+  dplyr::count(book_id) %>%
+  filter(n > 5) 
+
+comics_tf_idf = comics_tokens1 %>%
+  filter(book_id %in% comics_count$book_id) %>%
+  dplyr::count(book_id, words) %>%
+  bind_tf_idf(words, book_id, n)
+
+library(tidyr)
+comics.tdm = comics_tf_idf %>%
+  dplyr::select(book_id, words, tf_idf) %>%
+  pivot_wider(names_from = words, 
+              values_from = tf_idf, 
+              values_fill = 0) 
+```
+
+
+```{r}
+#сентимент-анализ отзывов
+
+goodread_comics_4 = goodread_comics %>% select(title, average_rating, book_id, language_code, publication_year, publisher, description)
+com = goodread_comics %>% transmute(title, average_rating, book_id, language_code, publication_year, publisher, description = str_to_lower(goodread_comics$description))
+review1 = goodread_reviews %>% transmute(book_id, rating, review = str_to_lower(goodread_reviews$review_text))
+com = left_join(com, review1, by = "book_id")
+tok = com %>% unnest_tokens(word, review, token = "words")
+tok = tok %>% filter(!word %in% stopw$word)
+
+q = get_sentiments("bing") %>% group_by(sentiment) %>% count()
+
+toktab = tok %>%
+inner_join(get_sentiments("bing")) %>%
+count(rating, sentiment) %>%
+spread(sentiment, n) %>%
+right_join(com %>% group_by(rating) %>% count())
+
+toktab1 = toktab %>% select(-rating, -n)
+toktab1 = toktab1/toktab$n
+?relocate
+toktab = toktab1 %>% mutate(rating = toktab$rating) %>% relocate(c(rating, positive, negative)) %>% round(., 2)
+```
+
+
+### Коллабаративная фильтрация
+В нашей рекомендательной системе мы использовали метод IBCF, потому что согласно формальной оценке, метрикам RMSE, MSE и MAE, IBCF показала себя лучше, чем UBCF.
+```{r}
+rev_colab = goodread_reviews %>% select(book_id, user_id, rating)
+
+reviews_colab = pivot_wider(rev_colab, names_from = book_id, values_from = rating)
+
+user_name = reviews_colab$user_id
+reviews_colab = select(reviews_colab, -user_id)
+
+reviews_colab = as.matrix(reviews_colab)
+rownames(reviews_colab) = user_name
+rc = as(reviews_colab, "realRatingMatrix")
+```
+
+
+Посмотрим на распрделение оценок по комксам и по пользователям.
+```{r}
+ggplot(data = data.frame(filmRate=colCounts(rc))) + geom_histogram(aes(x=filmRate))
+ggplot(data = data.frame(userRate=rowCounts(rc))) + geom_histogram(aes(x=userRate))
+```
+
+Мы итерационно выбрали ограничения в виде минимального количества (> 9) оценок у пользователя и у комикса. 
+```{r}
+rate_comics <- rc[rowCounts(rc) > 9, colCounts(rc) > 9]
+#rate_comics
+```
+
+**Функция для пользователя**
+```{r}
+# функция для рекомендации CF
+
+#убираем два комикса из серии Fullmetall Alchemist, так как функция выдаёт три комикса из этой серии, что является не самой лучшей рекомендацией для нового пользователя
+goodread_comics_new = goodread_comics %>% filter(title != 'Fullmetal Alchemist, Vol. 12 (Fullmetal Alchemist, #12)')
+goodread_comics_new = goodread_comics_new %>% filter(title != 'Fullmetal Alchemist, Vol. 6 (Fullmetal Alchemist, #6)')
+
+colab_func = function(user_id, n) {
+rec_top = goodread_reviews %>% filter(user_id == user_id & rating %in% c(4,5))
+
+if ((rowCounts(rc[user_id]) < 9) || (nrow(rec_top)==0)) {
+rec_new = goodread_comics_new %>% top_n(10, average_rating) %>% top_n(5, ratings_count) %>% select(title, average_rating) %>% arrange(desc(average_rating))
+rec_new
+}
+
+else {model = Recommender(data = rate_comics, method = "IBCF")
+predicted <- predict(object = model, newdata = rate_comics, n = n)
+recc_user <- predicted@items[[user_id]]
+comics_user <- predicted@itemLabels[recc_user]
+names_comics_user <- goodread_comics$title[match(comics_user, goodread_comics$book_id)]
+names_comics_user}
+}
+
+colab_func("0abbdc6dd66cbe4e52e9123f58a86e6e", 5)
+
+```
+
+**Функция для нового пользователя**
+Для нового пользователя делаем следующим образом: берём первые 10 комиксов по рейтингу, из них отбираем 5 с наибольшим количеством оценок и выводим их.
+```{r}
+
+
+colab_func_new = function(new) {
+rec_new = goodread_comics_new %>% top_n(10, average_rating) %>% top_n(5, ratings_count) %>% select(title, average_rating) %>% arrange(desc(average_rating))
+rec_new
+}
+
+colab_func_new("new")
+```
+
+**Оценивание рекомендации:** Систему мы оценивали двумя способами: формальной оценкой и внутренней пользовательской оценкой.
+
+**Формальная оценка:**
+```{r}
+#делим на тестовую и обучающую выборки
+
+set.seed(53)
+eval_set <- evaluationScheme(data = rate_comics,
+method = "split",
+train = 0.8,
+given = 4,
+goodRating = 4)
+
+rec_model_eval <- Recommender(data = getData(eval_set, "train"), method = "IBCF")
+
+rec_predict_eval <-
+predict(
+object = rec_model_eval,
+newdata = getData(eval_set, "known"),
+n=5,
+type = "ratings"
+)
+
+#проверка качества модели
+accuracy <- calcPredictionAccuracy(x = rec_predict_eval,
+data = getData(eval_set, "unknown"),
+byUser = F)
+accuracy
+```
+
+Это не лучший результат, который можно было бы ожидать, поскольку ошибка составляет примерно 1,2 балла, это из-за малого количества оценок у большинства пользователей.
+```{r}
+#Качество оценки UBCF
+set.seed(53)
+eval_set <- evaluationScheme(data = rate_comics,
+  method = "split",
+  train = 0.8,
+  given = 4,
+  goodRating = 4)
+
+train = getData(eval_set, "train")
+rec_model_eval1 <- Recommender(data = train, method = "IBCF")
+
+rec_predict_eval1 <-
+  predict(
+    object = rec_model_eval1,
+    newdata = getData(eval_set, "known"),
+    n=5,
+    type = "ratings"
+  )
+
+rec_model_eval2 = Recommender(data = train , method = 'UBCF', parameter = list(nn = 1))
+rec_predict_eval2 <-
+  predict(
+    object = rec_model_eval2,
+    newdata = getData(eval_set, "known"),
+    n=5,
+    type = "ratings"
+  )
+accuracy1 <- calcPredictionAccuracy(x = rec_predict_eval2,
+                                   data = getData(eval_set, "unknown"),
+                                   byUser = F)
+accuracy1
+```
+
+Также мы проверили систему UBCF, чтобы убедиться, что IBCF является более эффективной.
+
+**Внутренняя пользовательская оценка для рекомендаций коллаборативной фильтрации:**
+```{r}
+# забираем рекомендации 
+model = Recommender(data = rate_comics, method = "IBCF")
+predicted <- predict(object = model, newdata = rate_comics, n = 5, type="ratings")
+
+rec_predict =  as(predicted, "data.frame")
+names(rec_predict)[names(rec_predict) == "user"] <- "user_id"
+names(rec_predict)[names(rec_predict) == "item"] <- "book_id"
+```
+
+```{r}
+gr$book_id = as.character(gr$book_id)
+gr$mix = paste (gr$user_id, gr$book_id)
+rec_predict$mix = paste (rec_predict$user_id, rec_predict$book_id)
+rec_predict = anti_join(rec_predict, gr, by = "mix")
+rec_predict = rec_predict %>% select (-mix)
+```
+
+```{r}
+gc$book_id = as.character(gc$book_id)
+rec_predict = left_join(rec_predict, gc, by = "book_id")
+```
+
+Ниже представлена сводная таблица с характеристиками тех комиксов, которые оценил пользователь. Этим случайным пользователем стал юзер с id "08d805375530cc208801531ca7fdefbc".
+```{r}
+#что пользователь оценил 
+gr = gr %>%  select (-review_id, -date_added, -review_text, -mix)
+
+top5_com = gr %>% filter (user_id == "08d805375530cc208801531ca7fdefbc") %>% arrange(desc(rating)) %>% head(7)
+top5_com$book_id = as.character(top5_com$book_id)
+top5_com = top5_com %>% left_join(gc, by = "book_id")
+top5_com %>% select(title,rating, average_rating, all_shelves, publisher, num_pages, sent_type, size_type)
+```
+Вот здесь уже сводная таблица с характеристиками тех комиксов, которые ему были рекомендованы коллаборативной фильтрацией методом IBCF. 
+```{r}
+#что порекомендовали
+top5_ibcf = rec_predict %>% filter (user_id == "08d805375530cc208801531ca7fdefbc") %>% arrange(desc(rating)) %>% head(7)
+top5_ibcf %>% select(title,rating, average_rating, all_shelves, publisher, num_pages, sent_type, size_type)
+```
+Для того, чтобы оценить рекомендации на точность и адекватность, необходимо провести сравнение характеристик комиксов из двух представленных выше таблиц. 
+
+Как можно заметить по колонке rating, пользователю порекомендовались комиксы, для которых его предсказанная оценка похожа на его оценки прочитанных ранее комиксов. По колонке average_rating заметно, что рекомендованные комиксы очень похожи по средней своей оценке на комиксы, оцененные юзером ранее. В колонке со всеми жанрами, к которым причислялся комикс, в обеих таблицах также заметно сходство - совпало много жанров: comics, to-read, fantasy, graphic-novels. Часть издательств совпала также. Совпадения заметны и в категориях размерах комиксов и типах, которые были присвоены по итогам сентимент анализа описаний. Более того, оценка сентимент анализа в таблице рекомендаций по всем комиксам примерно совпадает во всех интервалах с этой же величиной в таблице оцененных комиксов. 
+
+Таким образом, можно констатирвоать факт, что произведения рекомендованные юзеру очень похожи на оцененные им ранее, что означает, что рекомендательная система построенная нами методом коллаборативной фильтрации работает правильно и исправно, выдавая адекватные и точные рекомендации. 
+
+### Content-based рекомендация
+
+Для нашей content-based модели будут использовать следующие переменные: *publisher*, *genre (all shelves)*, и *sentiment*, полученный в результате текстового анализа переменной 'description'.
+
+*Примечание 1:* Переменная 'all shelves' была получена в результате объединения и обработки переменных popular_shelves.0.name, popular_shelves.1.name, popular_shelves.2.name, popular_shelves.3.name, содержащихся в изначальном датасете. 
+
+```{r}
+goodread_comics_cont = goodread_comics %>% select(book_id, sent, publisher, popular_shelves.0.name, popular_shelves.1.name, popular_shelves.2.name, popular_shelves.3.name)
+
+#приводим к широкому формату
+goodread_comics_cont$zeroes = goodread_comics_cont$book_id*0
+goodread_comics_cont = goodread_comics_cont %>% spread(popular_shelves.0.name, zeroes)
+goodread_comics_cont$zeroes = goodread_comics_cont$book_id*0
+goodread_comics_cont = goodread_comics_cont %>% spread(popular_shelves.1.name, zeroes)
+goodread_comics_cont$zeroes = goodread_comics_cont$book_id*0
+goodread_comics_cont = goodread_comics_cont %>% spread(popular_shelves.2.name, zeroes)
+goodread_comics_cont$zeroes = goodread_comics_cont$book_id*0
+goodread_comics_cont = goodread_comics_cont %>% spread(popular_shelves.3.name, zeroes)
+goodread_comics_cont$zeroes = goodread_comics_cont$book_id*0
+goodread_comics_cont = goodread_comics_cont %>% spread(publisher, zeroes)
+goodread_comics_cont$all_shelves = goodread_comics$all_shelves
+goodread_comics_cont$publisher = goodread_comics$publisher
+```
+
+```{r, results=FALSE}
+#функции, которые заменяют NA на 1, если данный жанр относится к комиксу и на 0, если - нет
+f = function(goodread_comics_cont){
+   for (i in 3:88){
+      goodread_comics_cont[,i] = str_detect(goodread_comics_cont$all_shelves, pattern = colnames(goodread_comics_cont)[i])
+      goodread_comics_cont[,i] = case_when (goodread_comics_cont[,i] == T ~ 1, T ~ 0)
+   }
+   return(goodread_comics_cont)
+}
+
+#те же действия производятся с переменно publisher
+g = function(goodread_comics_cont){
+   for (i in 89:208){
+      goodread_comics_cont[,i] = str_detect(goodread_comics_cont$publisher, pattern = colnames(goodread_comics_cont)[i])
+      goodread_comics_cont[,i] = case_when (goodread_comics_cont[,i] == T ~ 1, T ~ 0)
+   }
+   return(goodread_comics_cont)
+}
+
+#применяем функции к датасету
+goodread_comics_cont = f(goodread_comics_cont)
+goodread_comics_cont = g(goodread_comics_cont)
+
+rownames = goodread_comics_cont$book_id
+rownames(goodread_comics_cont) = rownames
+
+#удаляем ненужные переменные
+goodread_comics_cont = goodread_comics_cont %>% select(-book_id, -all_shelves, -publisher)
+sim = lsa::cosine(t(as.matrix(goodread_comics_cont)))
+
+sim[10:15, 10:15] %>% round(2)
+diag(sim) = 0
+```
+
+Выдача рекомендаций происходит следующим образом:
+
+1. Если пользователь зарегистрирован в системе, то рекомендация выдается исходя из наивысщей оценки, оставленной пользователем. Система рекомендует 5 комиксов,похожих по своим характеристикам на комикс, обладающей высшей оценкой,оставленным пользователем (для выдачи рекомендации потребуется его *id*). 
+
+2. Если пользователь незарегистрирован в нащей системе, то он получает в виде рекомендации наиболее оцениваемые комиксы по введенному жанру (для выдачи рекомендации потребуется ввести *жанр*).
+
+*Примечание 2:* Функции вы можете рассмотреть ниже
+
+```{r}
+#оставляем в goodread_reviews комиксы только с теми айди, что используются в матрице схожести
+goodread_comics_id = goodread_comics %>% select(book_id)
+goodread_reviews = inner_join(goodread_reviews, goodread_comics_id, "book_id")
+
+#функция для старого пользователя
+bestfunctionyouhaveeverseen = function(reader_id){
+  reader = goodread_reviews %>% filter(user_id == reader_id) %>% filter(rating == max(rating))
+  r = goodread_reviews %>% filter(user_id == reader_id)
+  reader_1 = anti_join(r, reader, by="book_id")
+   sim_1 = sim  
+   
+   for (i in 1:nrow(reader_1)){
+      sim_1[as.character(reader_1$book_id)[i],]=0
+   }
+   
+   simCut = sim_1[,as.character(reader$book_id)]
+
+    mostSimilar = head(sort(simCut, decreasing = T), n = 5)
+    a = which(simCut %in% mostSimilar, arr.ind = TRUE, useNames = T)
+    a = a[1:5] 
+    index = arrayInd(a, .dim = dim(sim))
+    result = rownames(sim)[index[,1]]
+    recommend = filter(goodread_comics, book_id %in% result) %>% dplyr::select(title, book_id)
+  
+  recommend
+}
+
+bestfunctionyouhaveeverseen("00e62d596c4a080033cef8f1bb59aa7a")
+```
+#### Функция для нового пользователя
+```{r}
+#функция для нового пользователя
+comics_for_new = function(genre){
+   recommend_new = goodread_comics %>% filter(str_detect(goodread_comics$all_shelves, pattern=genre)) %>% top_n(10, average_rating) %>% top_n(5, ratings_count) %>% dplyr::select(title, book_id)
+   
+   recommend_new
+}
+
+comics_for_new("dc")
+```
+
+**Оценивание рекомендации:** 
+
+**Внутренняя пользовательская оценка для content-based рекомендаций:**
+
+Внутреннюю пользовательскую оценку для content-based рекомендаций проведем по тому же принципу, что и для коллаборативной фильтрации. Ниже представлены две таблицы. Первая - с оцененными пользователем комиксами ранее. Вторая - с рекомендованными комиксами. Но в этот раз проведем оценку адекватности рекомендаций уже для двух пользователей. 
+
+
+
+Первая таблица для первого пользователя с id "8939b9307db82290388df13945d7726e":
+```{r}
+top7 = goodread_reviews %>% select (book_id, user_id, rating) %>% filter (user_id == "8939b9307db82290388df13945d7726e")
+top7 = top7 %>% drop_na() %>% arrange(desc(rating)) %>% head (7)
+gc$book_id = as.character(gc$book_id)
+top7$book_id = as.character(top7$book_id)
+top7 = inner_join(top7,gc, by = "book_id")
+top7 %>% select(title,rating, average_rating, num_pages, all_shelves, publication_year, publisher, sent_type, size_type)
+```
+
+Вторая таблица - с рекомендациями комиксов для первого пользователя: 
+```{r}
+top5_rec = bestfunctionyouhaveeverseen("8939b9307db82290388df13945d7726e")
+top5_rec$book_id = as.character (top5_rec$book_id)
+top5_rec = inner_join(top5_rec, gc, by = "book_id")
+top5_rec %>% select(title.x, average_rating, num_pages, all_shelves, publication_year, publisher, sent_type, size_type) %>% head (7)
+```
+
+Снова можем наблюдать практически полное совпадение по характеристикам. Совпал, например, даже такой редкий жанр как dc. Более того, как можно заметить из первой таблицы, пользователь в целом оценивал комиксы выше, чем средняя есть для них оценка. Поэтому ему и могли рекомендоваться комиксы со средней оценкой ниже 4, которых, к сведению, было всего 2, а из них только у одного средняя оценка не округлялась бы до 4.
+
+Рекомендации для этого пользователя прошли проверку на адекватность. 
+ 
+Теперь проведем такое же сравнение для пользователя с id "18ee50445cbff3a198b9bca59ad4a3f9". 
+ 
+Ниже первая для него таблица - с оцененными им комиксами. 
+```{r}
+top7 = goodread_reviews %>% select (book_id, user_id, rating) %>% filter (user_id == "18ee50445cbff3a198b9bca59ad4a3f9")
+top7 = top7 %>% drop_na() %>% arrange(desc(rating)) %>% head (7)
+gc$book_id = as.character(gc$book_id)
+top7$book_id = as.character(top7$book_id)
+top7 = inner_join(top7,gc, by = "book_id")
+top7 %>% select(title, rating, average_rating, num_pages, all_shelves, publication_year, publisher, sent_type, size_type)
+```
+
+Вторая таблица - с рекомендациями для пользователя с id "18ee50445cbff3a198b9bca59ad4a3f9".
+```{r}
+top7_rec = bestfunctionyouhaveeverseen("18ee50445cbff3a198b9bca59ad4a3f9")
+top7_rec$book_id = as.character (top7_rec$book_id)
+top7_rec = inner_join(top7_rec, gc, by = "book_id")
+top7_rec %>% select(title.x, average_rating, num_pages, all_shelves, publication_year, publisher, sent_type, size_type) %>% head (7)
+```
+В очередной раз наблюдаем сильную схожесть: по среднему рейтингу, по жанру/жанрам, по издателю/издателям и размеру комикса. Только по типу, присвоенному комиксу по итогу сентимент-анализа, пользователю порекомендовались идентичные - "мрачные" комиксы. Но это не вредит адекватности рекомендации, потому что данному пользователю по душе как и "позитвные" комиксы, так и "мрачные" и даже "очень мрачные". 
+
+По итогам сравнения можно утверждать, что и при помощи content-based рекомендации пользователям предлагаются точные и адекватные, потенциально интересные для них комиксы. 
+
+### Примеры
+
+**Пример**:  Если бы пользователь оценивал на 4 и 5 комиксы с совершенно разными значениями в shelves, комиксы с какой "полки" ему бы достались в рекомендации? 
+
+*Ответ*: С любой, так как полки используются для оценки схожести комиксов. 
+
+**Пример**: При детальном исследовании датасета я заметила, что в датасете очень мало комиксов в жанре "historical fiction". Хотелось бы увидеть, что модель порекомендует, если ввести этот жанр.
+
+*Ответ*: В нашей выборке нет комиксов этого жанра
+
+**Пример**: Команда продемонстрировала, что если новый пользователь укажет определенного издателя - то рекомендации будут этому соответствовать. В данном случае, в принципе, всё хорошо. Можно, конечно, задать именно определенного пользователя (с своими оценками и отзывами, указать иные издательства для проверки рекомендательной системы).
+
+*Ответ*: Да, всё верно.
+
+**Пример**: Если бы был пользователь, который оценил Dragon Age, Volume 1; Fairy Tail, Vol. 1 на 5. Ему бы порекомендовали книги схожие по описанию и жанру: фэнтези, приключение, роман о мифических существах: драконы, феи, эльфы. 
+
+*Ответ*: В наших данных нет этого комикса
+
+
+##### Примеры collaborative filtering
+
+1) Если бы вам попался пользователь, который любит Супермена, то какие комиксы бы ему порекомендовала система?
+```{r, echo=FALSE, results=FALSE}
+goodread_reviews %>% filter(book_id == "2473642") %>% select(book_id, user_id, rating)
+```
+
+Рекомендация для пользователя, который любит Супермена и оценил комикс Superman and the Legion of Super-Heroes на 4.
+```{r}
+colab_func("5824b0d421da8c1def7be51939a209a9", 5)
+```
+
+Характеристики комикса Superman and the Legion of Super-Heroes и рекомендованных произведений.
+```{r}
+goodread_comics_1 %>% filter(title == "Superman and the Legion of Super-Heroes" | 
+                              title == "Doctor Strange: Into Shamballa" | 
+                               title == "Civil War: X-Men Universe" | 
+                               title == "Deadpool: Suicide Kings" | 
+                               title == "Batman: Streets of Gotham - Hush Money" | 
+                               title == "Spell Checkers, Vol. 1") %>% 
+  select(title, all_shelves, publisher, average_rating)
+```
+
+Всего в нашем нашем дата-сете 4 комикса с Супермэном, мы случайно выбрали один из комиксов, а потом также случайно выбрали 1 пользователя, который оценил этот комик на 4. Наша рекомендательная система выдала данному пользователю произведения от похожих издательств (DC Comics и Marvel одинаково крупные издательства), также все рекомендации соотвествуют полке "comics" и в жанре супергероики, и в большинстве сулчаев есть совпадения по оценкам.
+
+2) В вашем датасете, если я в collaborative filtering введу айди пользователя, которому нравится манга и захочу получить 5 комиксов, сколько из них будут отвечать этому жанру?
+
+```{r, echo=FALSE, results=FALSE}
+goodread_comics_1 %>% filter(all_shelves == "manga") %>% select(title, book_id)
+goodread_reviews %>% filter(book_id == "10912036") %>% select(book_id, user_id, rating)
+```
+
+Рекомендация для пользователя, который любит мангу и оценил Pretty Guardian Sailor Moon, Vol. 2 (Pretty Soldier Sailor Moon Renewal Edition, #2) на 5.
+```{r}
+colab_func("256a2d57f9629ba5bebdad5978958f5d", 5)
+```
+
+Характеристики манги Pretty Guardian Sailor Moon, Vol. 2 (Pretty Soldier Sailor Moon Renewal Edition, #2) и других рекомендованных произведений. 
+```{r}
+goodread_comics_1 %>% filter(title == "Pretty Guardian Sailor Moon, Vol. 2 (Pretty Soldier Sailor Moon Renewal Edition, #2)" | title == "The Push Man and Other Stories" | title == "The Complete Peanuts, Vol. 7: 1963-1964" | title == "Fullmetal Alchemist, Vol. 13 (Fullmetal Alchemist, #13)" | title == "Akira, Vol. 3" | title == "Seaguy") %>% select(title, all_shelves)
+```
+
+Мы случайным образом выбрали пользователя, который оценил мангу на 5, из 5 рекомендаций 3 также были в жанре манга.
+
+##### Примеры content-based
+
+1) Согласно функции и рекомендательной системе, если я укажу вселенную Marvel то я в теории ожидаю получить самые культовые по оценкам пользователей комиксы. К примеру, (самое популярное что я знаю) - Человек Паук, Перчатка Бесконечности, Росомаха :) 
+
+2) Я думаю, что я бы очень хотела попробовать свой пример на content-based функции для нового пользователя. Я знаю мало категорий комиксов, но, например, если бы я ввела "marvel", то наверное мне самыми рейтинговыми комиксами от марвел порекомендовались бы "Мстители" или комиксы про отдельных супергероев из Мстителей.
+```{r}
+comics_for_new = function(genre){
+   recommend_new = goodread_comics %>% filter(str_detect(goodread_comics$all_shelves, pattern=genre)) %>% top_n(10, average_rating) %>% top_n(5, ratings_count) %>% dplyr::select( title, book_id)
+   
+   recommend_new
+}
+
+comics_for_new("marvel")
+```
+
+Если ввести в рекомендательную систему вселенную Marvel, то она выдаст следующие комиксы: Thor #2, Daredevil: The Man Without Fear, Civil War: Iron Man, Hawkeye, Volume 4: Rio Bravo, Moon Knight, Volume 1: From the Dead (Moon Knight Vol. V, #1). 
+
+3) Пример: Если бы был новый пользователь, который укажет, что ему нравится Марвел, то ему будут рекомендованы наиболее высоко оцененные комиксы по данному издательству 
+Ответ: Да, всё верно.
+
+4) Хотелось бы проверить, как будет работать рекомендательная система на человека, который не будет привержен какой-либо стилистике. То есть, ему будет безралична мрачность описания, но ему будет важен аспект, допустим, раскрытия характеров героев. Например, мне с одинаково нравятся My little pony и Berserk, что мне выдаст рекомендация? 
+
+```{r}
+bestfunctionyouhaveeverseen = function(reader_id){
+  reader = goodread_reviews %>% filter(user_id == reader_id) %>% filter(rating == max(rating))
+   simCut = sim[,as.character(reader$book_id)]
+    mostSimilar = head(sort(simCut, decreasing = T), n = 5)
+    a = which(simCut %in% mostSimilar, arr.ind = TRUE, useNames = T)
+    index = arrayInd(a, .dim = dim(sim))
+    result = rownames(sim)[index[,1]]
+    recommend = filter(goodread_comics, book_id %in% result) %>% dplyr::select(title, book_id)
+  
+  recommend
+}
+
+bestfunctionyouhaveeverseen("00982d9fbae61a3a96654e21dbc74999")
+```
+
+Мы проверили пользователя 00982d9fbae61a3a96654e21dbc74999, который оценил на четвёрки Adrian and the Tree of Secrets и Spera, Volume 1, очень разные по стилистике. Ему выдало следующие рекомендации: The Little Endless Storybook, The Sword, Vol. 2: Water, The Spire, Elves. Vol. 1 (Elfes, #1-2) и Only the End of the World Again.
+
+5) Может ли быть такое что пользователю, которому нравятся депрессивные комиксы (по description) могут порекомендовать позитивные комиксы? 
+```{r}
+bestfunctionyouhaveeverseen = function(reader_id){
+  reader = goodread_reviews %>% filter(user_id == reader_id) %>% filter(rating == max(rating))
+   simCut = sim[,as.character(reader$book_id)]
+    mostSimilar = head(sort(simCut, decreasing = T), n = 5)
+    a = which(simCut %in% mostSimilar, arr.ind = TRUE, useNames = T)
+    index = arrayInd(a, .dim = dim(sim))
+    result = rownames(sim)[index[,1]]
+    recommend = filter(goodread_comics, book_id %in% result) %>% dplyr::select(title, book_id)
+  
+  recommend
+}
+
+bestfunctionyouhaveeverseen("338c5270dc97b572c0c1f633b28132d1")
+```
+
+В большинстве случаев, если пользователю нравились мрачные комиксы, все рекомендации для него тоже были мрачными. Но, например, пользователь 338c5270dc97b572c0c1f633b28132d1 оценил мрачный комикс на 5, и в один из пяти комиксов, которые ему порекомендовали, имел сентимент medium (Sex Criminals #3: My Sexual Errors and Misfortunes 2001-Present)
+
+### Выводы
+
+И коллаборативная фильтрация, и content-based рекомендация работают оптимально. Это можно увидеть как с помощью формальной оценки, так и с помощью рассмотрения эмпирических примеров от наших коллег.
+
+
+### Ответы на вопросы peer review
+
+**Вопрос:**
+проведение только формальной оценкой колаб. систему, отсутствие оценки контент бейсд системы.  
+*Ответ:* Сделали оценку content-based.
+
+**Вопрос:** А если в последней функции ввести вселенную, в которой окажется меньше комиксов, чем нужно в рекомендации? Система выдаст самые похожие или просто меньше комиксов?
+
+*Ответ:* выдаст меньше комиксов
+
+**Вопрос:** При выборе метода для collaborative фильтрации, лучше бы обосновать выбор между IBCF и UBCF сравнением показателей RMSE, MSE, MAE. 
+
+*Ответ:* Сделали UBCF фильтрацию - по формальным показателям она хуже IBCF, поэтому мы выбрали ее .
+
+**Вопрос:**  Какой вы использовали словарь для сентимент анализа?
+
+*Ответ:* Словарь afinn
+
+**Вопрос:** Почему вы выбрали IBCF для коллаборативной фильтрации и к каким выводам можно прийти после проверки качества на основе ошибки?
+
+*Ответ:* Мы выбрали IBCF, потому что ее формальные показатели точности были лучше, чем у IBCF. 
+
+**Вопрос:** Если пользователь вводит вселенную DC, то ему рекомендуются комиксы из той же вселенной. Есть ли какое-то влияние показателя publisher. То есть если издатель опубликовал несколько комиксов из разных вселенных?
+
+*Ответ:* мы, к сожалению, не поняли вопроса; подобная ситуация не рассматривается в нашем сценарии
+
+**Вопрос:** Что мне выдаст рекомендательная система 1 (collaborative filtering), если я буду новым пользователем?
+
+*Ответ:* Она по умолчанию выдаст топ комиксов по количеству и качеству оценок. 
+
+**Вопрос:** Не совсем понял, зачем был использован сентимент анализ для отзывов. Из него не получается никакого инференса, и он не используется в рекомендательной системе
+
+*Ответ:* Сентимент анализ 
+
+**Вопрос:** Предобработка данных: Вы не думали над тем, чтобы вместо удаления пропущенных значений, заменить их на что-то или же дополнить?
+
+*Ответ:* Тогда мы бы рисковали исказить результаты рекомендательной системы. Удаление является оптимальным решением для грамотной её работы.
+
+**Вопрос:** Каким образом вы подобрали ограничения в условии для collaborative filtering Rec.system? 
+
+*Ответ:* Ограничения были выбраны итерационно - мы строили модель, оценивали ее и так подобрали оптимальные числа. 
+
+**Вопрос:** Collaborative filtering. Вы говорите, что результат это комиксы наиболее похожие  на то, что пользователь до этого оценил на 4 и 5. Но ведь есть пользователи, которые в принципе ставили только 1,2 и 3. 
+
+*Ответ:* Такие же пользователи получат ту же рекомендацию, что и новые пользователи. 
+
+**Вопрос:** мне кажется, описание предобработки данных было необязательным, поскольку оно в той или иной степени обязательно для всех проектов.было бы интереснее увидеть конечний датасет для рекомендации (перед преобразованием в матричный формат) так же интересно, как много существующих пользователей оце
+
+*Ответ:* мы не до конца понимаем смысла вопроса, поэтому оставим его без ответа 
+
+**Вопрос:** Как в итоге были использованы наблюдения о сантимент анализе? Например, наблюдение о возрастании позитивных слов по отношению к негативным вместе с ростом средней оценки 
+
+*Ответ:* Это является частью исследования данных, которая впослдствии не использовались, однако мы решили ее оставить, чтобы предоставить больше сведений о наших данных
+
+**Вопрос:** Почему в коллаборативной фильтрации вы используете ограничения для пользователей больше 6 оценок и для комиксов больше 11? Почему именно эти числа?
+
+*Ответ:* Ограничения были выбраны итерационно - мы строили модель, оценивали ее и так подобрали оптимальные числа. 
+
+**Совет:** Провести LDA анализ описаний, а также использование метрики TF-IDF, оценить контент бейсд систему, провести оценку адекватности.
+
+*Ответ:* LDA анализ уже был проведён, TF-IDF проверили 
+
+**Совет:**  Я бы порекомендовала использовать темы, полученные в тематическом моделировании, при построении матрицы схожести, ведь это тоже достаточно важный параметр, отражающий похожесть комиксов. 
+
+*Ответ:* Мы отказались от этой мысли, так как решили, что это не будет эффективным, так как тематические группы всё равно оказывались достаточно нечёткой характеристикой
+
+**Совет:**  Посмотреть разное LDA разбиение и найти оптимум для количества групп. 
+
+*Ответ:* Тоже уже было выполнено, оптимальное количество групп - 5.
+
+**Совет:**  Может рассмотреть как потенциальную характеристику год издания - для повышения качества рекомендации. 
+
+*Ответ:* Первоначально у нас была такая идея, но в итоге мы от нее отказались. 
+
+**Совет:** Можно было сделать сетевой анализ 
+
+*Ответ:* Было бы интересно, если бы в коллаборативной системе рекомендовались комиксы новым пользователям по умолчанию, чтобы они могли оценить хотя бы их, потому что 6 комиксов для выдачи рекомендаций может показаться кому-то большим количеством, а рекомендовать же что-то нужно.
